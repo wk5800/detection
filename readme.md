@@ -1,7 +1,7 @@
 ## 某场景下目标检测
 
 ### 开发背景
-该实验是基于四百张红细胞显微图，使用Transfer Learning(迁移学习)和Faster RCNN，在Azure数据科学虚拟机里利用预装的Keras和Tensorflow框架完成红细胞的检测。
+某场景下的目标检测，希望通过此算法改变现有检测算法的不准确性
 
 ### 开发环境
 - Windows
