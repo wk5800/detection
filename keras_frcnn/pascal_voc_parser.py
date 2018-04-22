@@ -2,64 +2,86 @@ import os
 import cv2
 import xml.etree.ElementTree as ET
 import numpy as np
-def get_data(data_path):
+
+
+def get_data(input_path):
+    """文件夹路径分配"""
     all_imgs = []
 
     classes_count = {}
 
     class_mapping = {}
 
-    visualise = False    
+    visualise = False
+
+    data_paths = [os.path.join(input_path, s) for s in ['VOC2012']]
 
     print('Parsing annotation files')
 
-    #for data_path in data_paths:
-    annot_path = os.path.join(data_path, 'Annotations')
-    imgs_path = os.path.join(data_path, 'JPEGImages')
+    for data_path in data_paths:
 
-    train_files = []
-    test_files = []
+        annot_path = os.path.join(data_path, 'Annotations')
+        imgs_path = os.path.join(data_path, 'JPEGImages')
+        imgsets_path_trainval = os.path.join(data_path, 'ImageSets', 'Main', 'trainval.txt')
+        imgsets_path_test = os.path.join(data_path, 'ImageSets', 'Main', 'test.txt')
 
-    imgs = os.listdir(imgs_path)
-    # All the images in the folder will be set as training data
-    for value in imgs:
-        train_files.append(value)
-        print(value)
-        
-    annots = [os.path.join(annot_path, s) for s in os.listdir(annot_path)]
-    idx = 0
-    for annot in annots:
+        trainval_files = []
+        test_files = []
+        try:
+            with open(imgsets_path_trainval) as f:
+                for line in f:
+                    trainval_files.append(line.strip() + '.png')
+        except Exception as e:
+            print(e)
+
+        try:
+            with open(imgsets_path_test) as f:
+                for line in f:
+                    test_files.append(line.strip() + '.png')
+        except Exception as e:
+            if data_path[-7:] == 'VOC2012':
+                # this is expected, most pascal voc distibutions dont have the test.txt file
+                pass
+            else:
+                print(e)
+
+        annots = [os.path.join(annot_path, s) for s in os.listdir(annot_path)]  # 训练样本的xml路径
+        idx = 0
+        for annot in annots:
+
+            """依次解析XML文件"""
             try:
                 idx += 1
 
                 et = ET.parse(annot)
                 element = et.getroot()
 
-                # 拿到xml里面的值
                 element_objs = element.findall('object')
                 element_filename = element.find('filename').text
                 element_width = int(element.find('size').find('width').text)
                 element_height = int(element.find('size').find('height').text)
 
                 if len(element_objs) > 0:
-                    annotation_data = {'filepath': os.path.join(imgs_path, element_filename+'.jpg'), 'width': element_width,
+                    annotation_data = {'filepath': os.path.join(imgs_path, element_filename+'.png'), 'width': element_width,
                                        'height': element_height, 'bboxes': []}
 
-                    if element_filename in train_files:
-                        annotation_data['imageset'] = 'train'
+                    if element_filename in trainval_files:
+                        annotation_data['imageset'] = 'trainval'
                     elif element_filename in test_files:
                         annotation_data['imageset'] = 'test'
                     else:
-                        annotation_data['imageset'] = 'train'
+                        annotation_data['imageset'] = 'trainval'
 
                 for element_obj in element_objs:
                     class_name = element_obj.find('name').text
                     if class_name not in classes_count:
+                        """统计每种类型出现次数"""
                         classes_count[class_name] = 1
                     else:
                         classes_count[class_name] += 1
 
                     if class_name not in class_mapping:
+                        """为所有类型编号，从0开始"""
                         class_mapping[class_name] = len(class_mapping)
 
                     obj_bbox = element_obj.find('bndbox')
@@ -72,10 +94,13 @@ def get_data(data_path):
                         {'class': class_name, 'x1': x1, 'x2': x2, 'y1': y1, 'y2': y2, 'difficult': difficulty})
                 all_imgs.append(annotation_data)
 
+
                 if visualise:
                     img = cv2.imread(annotation_data['filepath'])
                     for bbox in annotation_data['bboxes']:
-                        cv2.rectangle(img, (bbox['x1'], bbox['y1']), (bbox['x2'], bbox['y2']), (255, 0, 0))
+                        cv2.rectangle(img, (bbox['x1'], bbox['y1']), (bbox[
+                                                                          'x2'], bbox['y2']), (0, 0, 255))
+                    print(annotation_data['filepath'])
                     cv2.imshow('img', img)
                     cv2.waitKey(0)
 
@@ -83,3 +108,28 @@ def get_data(data_path):
                 print(e)
                 continue
     return all_imgs, classes_count, class_mapping
+
+
+def get_trainvaltxt(Annotations_path,fname):
+    """生成trainval.txt"""
+
+    if os.path.exists(fname):
+        print("Error:'%s' already exists" % fname)
+    else:
+        fobj = open(fname, 'w')
+        fobj.close()
+
+    fobj = open(fname, 'a')  # 这里的a意思是追加，这样在加了之后就不会覆盖掉源文件中的内容，如果是w则会覆盖。
+    for annot in os.listdir(Annotations_path):
+        """依次解析XML文件"""
+        et = ET.parse(os.path.join(Annotations_path,annot))
+        element = et.getroot()
+        element_filename = element.find('filename').text
+        print(element_filename.split('.')[0])
+        fobj.write(element_filename+'\n')  # 这里的\n的意思是在源文件末尾换行，即新加内容另起一行插入。
+    fobj.close()  # 特别注意文件操作完毕后要close
+
+if __name__ == '__main__':
+    fname = 'C:/pythonProject/CosmicadDetection-Keras-Tensorflow-FasterRCNN-master/dataset/ImageSets/Main/trainval.txt'
+    path = 'C:/pythonProject/CosmicadDetection-Keras-Tensorflow-FasterRCNN-master/dataset/Annotations'
+    get_data(input_path='C:/pythonProject/keras-frcnn-master/train_data/VOCdevkit')

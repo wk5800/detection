@@ -1,8 +1,19 @@
+"""
+ROIs Pooling简单来说，是Pooling层的一种，而且是针对RoIs的Pooling，他的特点是输入特征图尺寸不固定，但是输出特征图尺寸固定；
+在faster RCNN中输出的是一个7×7的固定特征图。
+ROI pooling的图 输出的shape为(1, num_rois, channels, pool_size, pool_size) （为channel first），
+图片的batch为1故第0维，TimeDistributed包装器默认维度1为时间维，故num_rois在第1维。
+
+roipooling接受了一个[图像特征图信息,RPN中选取的框(1:1的正负样本)]的list，输出了num_rois个7×7×channel的特征层
+"""
+
+
 from keras.engine.topology import Layer
 import keras.backend as K
 
 if K.backend() == 'tensorflow':
     import tensorflow as tf
+
 
 class RoiPoolingConv(Layer):
     '''ROI pooling layer for 2D inputs.
@@ -25,9 +36,8 @@ class RoiPoolingConv(Layer):
         `(1, num_rois, channels, pool_size, pool_size)`
     '''
 
-    # 参数定义
     def __init__(self, pool_size, num_rois, **kwargs):
-
+        """参数定义"""
         self.dim_ordering = K.image_dim_ordering()
         assert self.dim_ordering in {'tf', 'th'}, 'dim_ordering must be in {tf, th}'
 
@@ -50,7 +60,7 @@ class RoiPoolingConv(Layer):
 
     def call(self, x, mask=None):
 
-        assert(len(x) == 2)
+        assert (len(x) == 2)
 
         img = x[0]
         rois = x[1]
@@ -65,13 +75,13 @@ class RoiPoolingConv(Layer):
             y = rois[0, roi_idx, 1]
             w = rois[0, roi_idx, 2]
             h = rois[0, roi_idx, 3]
-            
+
             row_length = w / float(self.pool_size)
             col_length = h / float(self.pool_size)
 
             num_pool_regions = self.pool_size
 
-            #NOTE: the RoiPooling implementation differs between theano and tensorflow due to the lack of a resize op
+            # NOTE: the RoiPooling implementation differs between theano and tensorflow due to the lack of a resize op
             # in theano. The theano implementation is much less efficient and leads to long compile times
 
             if self.dim_ordering == 'th':
@@ -87,9 +97,9 @@ class RoiPoolingConv(Layer):
                         y1 = K.cast(y1, 'int32')
                         y2 = K.cast(y2, 'int32')
 
-                        x2 = x1 + K.maximum(1,x2-x1)
-                        y2 = y1 + K.maximum(1,y2-y1)
-                        
+                        x2 = x1 + K.maximum(1, x2 - x1)
+                        y2 = y1 + K.maximum(1, y2 - y1)
+
                         new_shape = [input_shape[0], input_shape[1],
                                      y2 - y1, x2 - x1]
 
@@ -104,7 +114,7 @@ class RoiPoolingConv(Layer):
                 w = K.cast(w, 'int32')
                 h = K.cast(h, 'int32')
 
-                rs = tf.image.resize_images(img[:, y:y+h, x:x+w, :], (self.pool_size, self.pool_size))
+                rs = tf.image.resize_images(img[:, y:y + h, x:x + w, :], (self.pool_size, self.pool_size))
                 outputs.append(rs)
 
         final_output = K.concatenate(outputs, axis=0)
@@ -116,8 +126,7 @@ class RoiPoolingConv(Layer):
             final_output = K.permute_dimensions(final_output, (0, 1, 2, 3, 4))
 
         return final_output
-    
-    
+
     def get_config(self):
         config = {'pool_size': self.pool_size,
                   'num_rois': self.num_rois}

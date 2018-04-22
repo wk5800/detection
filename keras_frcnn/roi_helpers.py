@@ -6,11 +6,21 @@ import copy
 
 
 def calc_iou(R, img_data, C, class_mapping):
+    """
+
+    :param R: 预选框
+    :param img_data: 图片信息
+    :param C: 配置信息
+    :param class_mapping: 类别与映射数字之间的关系
+    :return: 筛选后的预选框、对应的类别、相应的回归梯度、交并比
+    """
+    """找出剩下的不多的region对应ground truth里重合度最高的bbox，从而获得model_classifier的数据和标签 """
     bboxes = img_data['bboxes']
     (width, height) = (img_data['width'], img_data['height'])
     # get image dimensions for resizing
     (resized_width, resized_height) = data_generators.get_new_img_size(width, height, C.im_size)
 
+    # 这里跟calc_rpn基本一致
     gta = np.zeros((len(bboxes), 4))
 
     for bbox_num, bbox in enumerate(bboxes):
@@ -36,12 +46,15 @@ def calc_iou(R, img_data, C, class_mapping):
         best_iou = 0.0
         best_bbox = -1
         for bbox_num in range(len(bboxes)):
+
+            #  x1 x2 y1 y2是生成的框，gta是相对于原图缩小比例的bbox
             curr_iou = data_generators.iou([gta[bbox_num, 0], gta[bbox_num, 2], gta[bbox_num, 1], gta[bbox_num, 3]],
                                            [x1, y1, x2, y2])
             if curr_iou > best_iou:
                 best_iou = curr_iou
                 best_bbox = bbox_num
 
+        # 如果对于某个框，其匹配现有的bbox重叠率小于0.3，那么这个框就扔掉
         if best_iou < C.classifier_min_overlap:
             continue
         else:
@@ -69,6 +82,7 @@ def calc_iou(R, img_data, C, class_mapping):
                 print('roi = {}'.format(best_iou))
                 raise RuntimeError
 
+        # 找到class对应的类别的数字标签：0,1,2...
         class_num = class_mapping[cls_name]
         class_label = len(class_mapping) * [0]
         class_label[class_num] = 1
@@ -78,6 +92,8 @@ def calc_iou(R, img_data, C, class_mapping):
         if cls_name != 'bg':
             label_pos = 4 * class_num
             sx, sy, sw, sh = C.classifier_regr_std
+
+            # coords: 坐标调整：相当于coords是回归要学习的内容
             coords[label_pos:4 + label_pos] = [sx * tx, sy * ty, sw * tw, sh * th]
             labels[label_pos:4 + label_pos] = [1, 1, 1, 1]
             y_class_regr_coords.append(copy.deepcopy(coords))
@@ -89,14 +105,17 @@ def calc_iou(R, img_data, C, class_mapping):
     if len(x_roi) == 0:
         return None, None, None, None
 
+    # X保留所有的背景和match bbox的框； Y1 是类别one-hot转码； Y2是对应类别的标签及回归要学习的坐标位置
     X = np.array(x_roi)
     Y1 = np.array(y_class_num)
     Y2 = np.concatenate([np.array(y_class_regr_label), np.array(y_class_regr_coords)], axis=1)
 
+    # expand_dims:增加一个通道
     return np.expand_dims(X, axis=0), np.expand_dims(Y1, axis=0), np.expand_dims(Y2, axis=0), IoUs
 
 
 def apply_regr(x, y, w, h, tx, ty, tw, th):
+
     try:
         cx = x + w / 2.
         cy = y + h / 2.
@@ -123,6 +142,18 @@ def apply_regr(x, y, w, h, tx, ty, tw, th):
 
 
 def apply_regr_np(X, T):
+    """
+    使用regr对anchor所确定的框进行修正
+    :param x:
+    :param y:
+    :param w:
+    :param h:
+    :param tx: 是实际框的中心点cx与预选宽的中心点cxa的差值，除以预选框的宽度
+    :param ty: 同tx
+    :param tw: 是实际框的宽度的log除预选宽的宽度
+    :param th: 同tw
+    :return:
+    """
     try:
         x = X[0, :, :]
         y = X[1, :, :]
@@ -227,6 +258,17 @@ import time
 
 
 def rpn_to_roi(rpn_layer, regr_layer, C, dim_ordering, use_regr=True, max_boxes=300, overlap_thresh=0.9):
+    """
+    把由RPN输出的所有可能的框过滤掉重合度高的框（转化为指定个数的预选框），降低计算复杂度.
+    :param rpn_layer: 框对应的概率（是否存在物体）
+    :param regr_layer: 每个框对应的回归梯度
+    :param C: 配置信息
+    :param dim_ordering: 维度组织形式
+    :param use_regr: 是否进行边框回归（一般为True）
+    :param max_boxes: 要取出多少个框
+    :param overlap_thresh: 重叠度的阈值
+    :return: 返回指定个数的预选框，形式是（x1,y1,x2,y2）
+    """
     regr_layer = regr_layer / C.std_scaling
 
     anchor_sizes = C.anchor_box_scales
@@ -249,24 +291,31 @@ def rpn_to_roi(rpn_layer, regr_layer, C, dim_ordering, use_regr=True, max_boxes=
     for anchor_size in anchor_sizes:
         for anchor_ratio in anchor_ratios:
 
+            # 得到框的长宽在原图上的映射
             anchor_x = (anchor_size * anchor_ratio[0]) / C.rpn_stride
             anchor_y = (anchor_size * anchor_ratio[1]) / C.rpn_stride
+
+            # 得到相应尺寸的框对应的回归梯度，将深度都放到第一个维度
             if dim_ordering == 'th':
                 regr = regr_layer[0, 4 * curr_layer:4 * curr_layer + 4, :, :]
             else:
                 regr = regr_layer[0, :, :, 4 * curr_layer:4 * curr_layer + 4]
                 regr = np.transpose(regr, (2, 0, 1))
 
-            X, Y = np.meshgrid(np.arange(cols), np.arange(rows))
+            X, Y = np.meshgrid(np.arange(cols), np.arange(rows))  # 将向量1和2定义的区域转换成矩阵1和2
 
+            # 得到anchor对应的（x,y,w,h）
             A[0, :, :, curr_layer] = X - anchor_x / 2
             A[1, :, :, curr_layer] = Y - anchor_y / 2
             A[2, :, :, curr_layer] = anchor_x
             A[3, :, :, curr_layer] = anchor_y
 
+
+            # 使用regr对anchor所确定的框进行修正
             if use_regr:
                 A[:, :, :, curr_layer] = apply_regr_np(A[:, :, :, curr_layer], regr)
 
+            # 对修正后的边框一些不合理的地方进行矫正。
             A[2, :, :, curr_layer] = np.maximum(1, A[2, :, :, curr_layer])
             A[3, :, :, curr_layer] = np.maximum(1, A[3, :, :, curr_layer])
             A[2, :, :, curr_layer] += A[0, :, :, curr_layer]
@@ -279,19 +328,22 @@ def rpn_to_roi(rpn_layer, regr_layer, C, dim_ordering, use_regr=True, max_boxes=
 
             curr_layer += 1
 
+    # 得到all_boxes形状是（n,4），和每一个框对应的概率all_probs形状是（n,）
     all_boxes = np.reshape(A.transpose((0, 3, 1, 2)), (4, -1)).transpose((1, 0))
     all_probs = rpn_layer.transpose((0, 3, 1, 2)).reshape((-1))
 
+    # 删除掉一些不合理的点，即右下角的点值要小于左上角的点值
     x1 = all_boxes[:, 0]
     y1 = all_boxes[:, 1]
     x2 = all_boxes[:, 2]
     y2 = all_boxes[:, 3]
 
-    idxs = np.where((x1 - x2 >= 0) | (y1 - y2 >= 0))
+    idxs = np.where((x1 - x2 >= 0) | (y1 - y2 >= 0))  # np.where() 返回位置信息，这也是删除不符合要求点的一种方法
 
-    all_boxes = np.delete(all_boxes, idxs, 0)
+    all_boxes = np.delete(all_boxes, idxs, 0)  # 最后一个参数是在哪一个维度删除
     all_probs = np.delete(all_probs, idxs, 0)
 
+    # 非极大值抑制（根据要求选取指定个数的合理预选框）
     result = non_max_suppression_fast(all_boxes, all_probs, overlap_thresh=overlap_thresh, max_boxes=max_boxes)[0]
 
     return result
